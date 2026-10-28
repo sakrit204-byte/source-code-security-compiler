@@ -277,6 +277,7 @@ class UnboundedInputRule(Rule):
 
 # --------------------------------------------------------------------- AST005
 COMPARE_FUNCS = {"strcmp", "strncmp", "strcasecmp", "strncasecmp", "memcmp", "_stricmp", "stricmp", "wcscmp"}
+COMPARE_METHODS = {"equals", "equalsIgnoreCase", "contentEquals", "compareTo", "compare", "matches"}
 
 
 class HardcodedCredentialAstRule(Rule):
@@ -286,12 +287,45 @@ class HardcodedCredentialAstRule(Rule):
         description="A credential is compared against, or initialised from, a string literal.",
         recommendation="Verify secrets against a salted hash stored outside the code (e.g. bcrypt/argon2), "
                        "and compare in constant time.",
-        detects="Call(strcmp-family, credential-like Identifier, StringLiteral) · VarDecl/Assignment(credential-like, StringLiteral)",
+        detects="Call(strcmp-family | x.equals, credential-like Identifier, StringLiteral) · "
+                "BinaryOp(==, credential, StringLiteral) · VarDecl/Assignment(credential-like, StringLiteral) · "
+                "getConnection(url, user, StringLiteral)",
+        languages=("c", "cpp", "java"),
     )
+
+    @staticmethod
+    def var_name(var: A.Node) -> str:
+        if isinstance(var, A.Member):
+            return var.field_name
+        return A.root_identifier(var) or ""
 
     def check(self, ctx: AstContext) -> Iterable[Finding]:
         for node in ctx.ast.walk():
             self.examined += 1
+            if isinstance(node, A.Call) and isinstance(node.callee, A.Member) and \
+                    node.callee.field_name in COMPARE_METHODS and node.args:
+                method = node.callee.field_name
+                for var, lit in ((node.callee.obj, node.args[0]), (node.args[0], node.callee.obj)):
+                    literal = A.literal_string(lit)
+                    name = self.var_name(var)
+                    if literal is None or not looks_like_secret_value(literal):
+                        continue
+                    in_condition = any(isinstance(anc, (A.If, A.While, A.Conditional, A.Return)) for anc in node.ancestors())
+                    if is_credential_name(name) or (in_condition and shannon_entropy(literal) >= 3.0 and len(literal) >= 8):
+                        yield self.finding(
+                            ctx, node.line, node.col,
+                            f"'{name}' is checked against the hard-coded value \"{mask(literal)}\" with .{method}(); "
+                            "the secret ships inside the compiled program and the comparison is not constant-time.",
+                            evidence=describe(node, ctx), subject=name, node=node)
+                        break
+                continue
+            if isinstance(node, A.Call) and node.method == "getConnection" and len(node.args) >= 3:
+                literal = A.literal_string(node.args[2])
+                if literal is not None and looks_like_secret_value(literal):
+                    yield self.finding(ctx, node.line, node.col,
+                                       f"Database password \"{mask(literal)}\" is passed to getConnection() as a "
+                                       "literal.", evidence=describe(node, ctx), subject="getConnection", node=node)
+                continue
             if isinstance(node, A.Call) and node.func_name in COMPARE_FUNCS and len(node.args) >= 2:
                 a, b = node.args[0], node.args[1]
                 for var, lit in ((a, b), (b, a)):
@@ -329,6 +363,12 @@ class HardcodedCredentialAstRule(Rule):
             elif isinstance(node, A.BinaryOp) and node.op in ("==", "!="):
                 for var, lit in ((node.left, node.right), (node.right, node.left)):
                     name = A.root_identifier(var) or ""
+                    literal = A.literal_string(lit)
+                    if literal is not None and is_credential_name(name) and looks_like_secret_value(literal):
+                        yield self.finding(ctx, node.line, node.col,
+                                           f"'{name}' is compared with the hard-coded secret \"{mask(literal)}\" "
+                                           f"using '{node.op}'.", evidence=describe(node, ctx), subject=name, node=node)
+                        break
                     if isinstance(lit, A.IntLiteral) and is_credential_name(name) and abs(lit.value) >= 100:
                         yield self.finding(ctx, node.line, node.col,
                                            f"'{name}' is compared with the hard-coded numeric secret {lit.raw}.",
@@ -560,10 +600,12 @@ class UseAfterFreeRule(Rule):
     meta = RuleMeta(
         id="AST010", name="Use after free / double free", level="ast", severity="high",
         category="Memory management", cwe="CWE-416",
-        description="A pointer is used or freed again after free() in the same block, without being reassigned.",
-        recommendation="Set the pointer to NULL right after free() and do not touch it again.",
-        detects="Within one function, in source order: Call(free, p) … use(p) with no 'p = …' in between "
-                "(free must dominate the use lexically)",
+        description="A pointer is used or released again after free() / delete in the same block, without being "
+                    "reassigned.",
+        recommendation="Set the pointer to NULL / nullptr right after releasing it (or use smart pointers in C++) "
+                       "and do not touch it again.",
+        detects="Within one function, in source order: Call(free, p) | Delete(p) … use(p) with no 'p = …' in "
+                "between (the release must dominate the use lexically)",
     )
 
     def check(self, ctx: AstContext) -> Iterable[Finding]:
@@ -578,6 +620,10 @@ class UseAfterFreeRule(Rule):
                 if isinstance(node, A.Call) and node.func_name == "free" and node.args:
                     sym = ctx.sem.symbol_for(node.args[0])
                     if sym is not None and isinstance(strip_casts(node.args[0]), A.Identifier):
+                        events.append((node.line, node.col, order, "free", sym, node))
+                elif isinstance(node, A.Delete):
+                    sym = ctx.sem.symbol_for(node.operand)
+                    if sym is not None and isinstance(strip_casts(node.operand), A.Identifier):
                         events.append((node.line, node.col, order, "free", sym, node))
                 elif isinstance(node, A.Assignment):
                     sym = ctx.sem.symbol_for(node.target) if isinstance(node.target, A.Identifier) else None
@@ -600,21 +646,25 @@ class UseAfterFreeRule(Rule):
                     prev = freed.get(key)
                     if prev is not None and self.dominates(prev, node) and key not in reported:
                         reported.add(key)
+                        verb = "deleted" if isinstance(node, A.Delete) else "freed"
                         yield self.finding(ctx, node.line, node.col,
-                                           f"'{sym.name}' is freed again (first freed on line {prev.line}); double "
-                                           "free corrupts the allocator and is often exploitable.",
-                                           cwe="CWE-415", title="Double free", evidence=describe(node, ctx),
-                                           subject=sym.name, node=node)
+                                           f"'{sym.name}' is {verb} again (first released on line {prev.line}); "
+                                           "a double release corrupts the allocator and is often exploitable.",
+                                           cwe="CWE-415", title="Double free" if verb == "freed" else "Double delete",
+                                           evidence=describe(node, ctx), subject=sym.name, node=node)
                     else:
                         freed[key] = node
                     continue
                 prev = freed.get(key)
                 if prev is not None and self.dominates(prev, node) and key not in reported:
                     reported.add(key)
+                    deleted = isinstance(prev, A.Delete)
+                    release = f"delete {sym.name}" if deleted else f"free({sym.name})"
                     yield self.finding(ctx, node.line, node.col,
-                                       f"'{sym.name}' is used after being freed on line {prev.line}; the memory may "
-                                       "already belong to another allocation.",
-                                       title="Use after free", evidence=f"free({sym.name}) @L{prev.line} ⟶ "
+                                       f"'{sym.name}' is used after being {'deleted' if deleted else 'freed'} on line "
+                                       f"{prev.line}; the memory may already belong to another allocation.",
+                                       title="Use after delete" if deleted else "Use after free",
+                                       evidence=f"{release} @L{prev.line} ⟶ "
                                        f"{describe(node.parent, ctx)} @L{node.line}", subject=sym.name, node=node)
 
     @staticmethod
@@ -622,7 +672,7 @@ class UseAfterFreeRule(Rule):
         parent = node.parent
         while isinstance(parent, A.Cast):
             parent = parent.parent
-        return isinstance(parent, A.Call) and parent.func_name == "free"
+        return (isinstance(parent, A.Call) and parent.func_name == "free") or isinstance(parent, A.Delete)
 
     @staticmethod
     def is_assign_target(node: A.Identifier) -> bool:
@@ -668,6 +718,7 @@ class AssignmentInConditionRule(Rule):
         description="A condition contains '=' where '==' was probably intended; the branch outcome is fixed.",
         recommendation="Use '==' for comparison; if the assignment is intended, compare its result explicitly.",
         detects="If/While/For(cond = Assignment('='))",
+        languages=("c", "cpp", "java"),
     )
 
     def check(self, ctx: AstContext) -> Iterable[Finding]:

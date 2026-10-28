@@ -16,6 +16,7 @@ class TokenType(str, Enum):
     OPERATOR = "OPERATOR"
     DELIMITER = "DELIMITER"
     PREPROCESSOR = "PREPROCESSOR"
+    ANNOTATION = "ANNOTATION"  # Java @Annotation(...)
     COMMENT = "COMMENT"
     ERROR = "ERROR"
     EOF = "EOF"
@@ -46,7 +47,7 @@ OPERATORS = sorted(
 DELIMITERS = frozenset("(){}[];,")
 
 # Tokens the parser never sees: they are kept for lexical analysis only.
-TRIVIA = frozenset({TokenType.COMMENT, TokenType.PREPROCESSOR})
+TRIVIA = frozenset({TokenType.COMMENT, TokenType.PREPROCESSOR, TokenType.ANNOTATION})
 
 
 @dataclass
@@ -61,6 +62,7 @@ class Token:
     value: object = None
     pattern: str = ""
     notes: list[str] = field(default_factory=list)
+    extra: object = field(default=None, repr=False)  # parser-only payload
 
     def is_(self, type_: TokenType, lexeme: str | None = None) -> bool:
         return self.type == type_ and (lexeme is None or self.lexeme == lexeme)

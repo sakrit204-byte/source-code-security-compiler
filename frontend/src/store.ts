@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "./api";
+import { isLanguageChoice, type LanguageChoice } from "./languages";
 import type { Conversation, Turn } from "./types";
 
 const STORAGE_KEY = "secscan.conversations.v1";
@@ -11,7 +12,7 @@ const uid = () => Math.random().toString(36).slice(2, 10) + Date.now().toString(
 function persist(conversations: Conversation[]) {
   const slim = conversations.slice(0, MAX_CONVERSATIONS).map((c) => ({
     ...c,
-    turns: c.turns.map(({ id, code, filename, createdAt }) => ({ id, code, filename, createdAt })),
+    turns: c.turns.map(({ id, code, filename, language, createdAt }) => ({ id, code, filename, language, createdAt })),
   }));
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(slim));
@@ -30,7 +31,9 @@ function load(): Conversation[] {
 }
 
 function titleFor(code: string, filename: string): string {
-  if (filename && filename !== "input.c") return filename;
+  if (filename) return filename;
+  const cls = code.match(/\b(?:class|interface|enum|record|struct)\s+([A-Za-z_]\w*)\s*[:{<]|\bclass\s+([A-Za-z_]\w*)/);
+  if (cls) return `${cls[1] ?? cls[2]} scan`;
   const fn = code.match(/\b(?:int|void|char|static|unsigned|long|float|double)\s+\**\s*([A-Za-z_]\w*)\s*\(/);
   return fn ? `${fn[1]}() scan` : "Untitled scan";
 }
@@ -57,7 +60,7 @@ export function useConversations() {
   const runTurn = useCallback(
     async (convId: string, turn: Turn) => {
       try {
-        const result = await api.scan(turn.code, turn.filename);
+        const result = await api.scan(turn.code, turn.filename, turn.language ?? "auto");
         patchTurn(convId, turn.id, { result, error: undefined });
       } catch (err) {
         patchTurn(convId, turn.id, { error: err instanceof Error ? err.message : String(err) });
@@ -67,8 +70,8 @@ export function useConversations() {
   );
 
   const submit = useCallback(
-    async (code: string, filename: string, opts: { fresh?: boolean } = {}) => {
-      const turn: Turn = { id: uid(), code, filename: filename || "input.c", createdAt: Date.now(), animate: true };
+    async (code: string, filename: string, language: LanguageChoice = "auto", opts: { fresh?: boolean } = {}) => {
+      const turn: Turn = { id: uid(), code, filename, language, createdAt: Date.now(), animate: true };
       let convId = opts.fresh ? null : activeId;
       if (!convId) {
         convId = uid();
@@ -145,6 +148,26 @@ export function useConversations() {
 
   const active = conversations.find((c) => c.id === activeId) ?? null;
   return { conversations, active, activeId, busy, submit, select, remove, clearAll, retry, finishAnimation };
+}
+
+/** The composer's language choice survives reloads. */
+export function useLanguageChoice() {
+  const [language, setLanguage] = useState<LanguageChoice>(() => {
+    try {
+      const saved = localStorage.getItem("secscan.language");
+      return isLanguageChoice(saved) ? saved : "auto";
+    } catch {
+      return "auto";
+    }
+  });
+  useEffect(() => {
+    try {
+      localStorage.setItem("secscan.language", language);
+    } catch {
+      /* ignore */
+    }
+  }, [language]);
+  return [language, setLanguage] as const;
 }
 
 export function useTheme() {

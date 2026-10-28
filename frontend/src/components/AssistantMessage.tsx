@@ -14,6 +14,7 @@ import {
 } from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
 import { api } from "../api";
+import type { LanguageChoice } from "../languages";
 import { AstStage } from "../stages/AstStage";
 import { LexerStage } from "../stages/LexerStage";
 import { ParserStage } from "../stages/ParserStage";
@@ -57,7 +58,7 @@ const SHORT: Record<StageId, string> = {
 interface Props {
   turn: Turn;
   onAnimationDone: () => void;
-  onEdit: (code: string, filename: string) => void;
+  onEdit: (code: string, filename: string, language: LanguageChoice) => void;
   onRetry: () => void;
 }
 
@@ -129,19 +130,26 @@ export function AssistantMessage({ turn, onAnimationDone, onEdit, onRetry }: Pro
   );
 }
 
+const METHOD_TEXT: Record<string, string> = {
+  extension: "recognised from the file extension",
+  content: "auto-detected from the code",
+  default: "assumed by default",
+};
+
 function Intro({ turn, result, done }: { turn: Turn; result?: ScanResult; done: boolean }) {
   if (!result)
     return (
       <p className="flex items-center gap-2 text-[15px] text-muted">
         <Loader2 size={16} className="animate-spin text-accent" />
-        Compiling <code className="rounded bg-panel-2 px-1.5 py-0.5 text-[13px]">{turn.filename}</code> through the analysis pipeline…
+        Compiling <code className="rounded bg-panel-2 px-1.5 py-0.5 text-[13px]">{turn.filename || "your code"}</code> through the analysis pipeline…
       </p>
     );
   return (
     <p className="text-[15px] leading-relaxed">
       {done ? "I ran " : "Running "}
       <code className="rounded bg-panel-2 px-1.5 py-0.5 text-[13px]">{result.meta.filename}</code>
-      {" "}({result.meta.lines} lines) through all {result.stages.length} stages of the compiler front end and both security
+      {" "}({result.meta.lines} lines of <b>{result.meta.language}</b>
+      {result.meta.detection.method === "user" ? ", as you selected" : `, ${METHOD_TEXT[result.meta.detection.method]}`}) through all {result.stages.length} stages of the compiler front end and both security
       modules{done ? <> in <b>{ms(result.meta.duration_ms)}</b>. Here is what happened at each step.</> : "…"}
     </p>
   );
@@ -325,8 +333,8 @@ function Actions({ turn, result, onEdit }: { turn: Turn; result: ScanResult; onE
   };
   return (
     <div className="flex flex-wrap gap-2">
-      <Chip onClick={() => onEdit(turn.code, turn.filename)} icon={<PencilLine size={13} />}>Edit &amp; re-scan</Chip>
-      <Chip onClick={() => api.export(result.source, result.meta.filename, "html")} icon={<FileCode2 size={13} />}>Export HTML report</Chip>
+      <Chip onClick={() => onEdit(turn.code, turn.filename, turn.language ?? "auto")} icon={<PencilLine size={13} />}>Edit &amp; re-scan</Chip>
+      <Chip onClick={() => api.export(result.source, result.meta.filename, "html", result.meta.language_id)} icon={<FileCode2 size={13} />}>Export HTML report</Chip>
       <Chip onClick={copy} icon={<Copy size={13} />}>{copied ? "Copied" : "Copy summary"}</Chip>
     </div>
   );

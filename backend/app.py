@@ -17,6 +17,8 @@ from pydantic import BaseModel, Field
 
 from secscan import VERSION, run_pipeline
 from secscan.engine import rule_catalog
+from secscan.langs import FRONT_ENDS
+from secscan.langs.detect import EXTENSIONS, detect_language
 from secscan.pipeline import MAX_SOURCE_BYTES, STAGE_INFO
 from secscan.report import to_html, to_text
 
@@ -33,19 +35,37 @@ app.add_middleware(
 )
 
 
+LanguageChoice = Literal["auto", "c", "cpp", "java"]
+DEFAULT_NAMES = {"c": "input.c", "cpp": "input.cpp", "java": "Input.java"}
+
+
 class ScanRequest(BaseModel):
     code: str = Field(..., max_length=MAX_SOURCE_BYTES)
-    filename: str = Field("input.c", max_length=200)
+    filename: str = Field("", max_length=200)
+    language: LanguageChoice = "auto"
     disabled_rules: list[str] = Field(default_factory=list)
+
+
+class DetectRequest(BaseModel):
+    code: str = Field(..., max_length=MAX_SOURCE_BYTES)
+    filename: str = Field("", max_length=200)
 
 
 class ExportRequest(ScanRequest):
     format: Literal["html", "text", "json"] = "html"
 
 
-def safe_filename(name: str) -> str:
-    cleaned = re.sub(r"[^A-Za-z0-9._-]", "_", Path(name).name) or "input.c"
-    return cleaned[:100]
+def safe_filename(name: str, language: str = "c") -> str:
+    cleaned = re.sub(r"[^A-Za-z0-9._-]", "_", Path(name).name) if name else ""
+    return (cleaned or DEFAULT_NAMES.get(language, "input.c"))[:100]
+
+
+def resolved_filename(req: ScanRequest) -> str:
+    """Pasted code has no name: give it one with the right extension once the language is known."""
+    if req.filename:
+        return safe_filename(req.filename)
+    language = req.language if req.language != "auto" else detect_language(req.code).language
+    return DEFAULT_NAMES[language]
 
 
 @app.get("/api/health")
@@ -58,6 +78,17 @@ def rules() -> dict:
     return {"rules": rule_catalog()}
 
 
+@app.get("/api/languages")
+def languages() -> dict:
+    return {"languages": [{"id": fe.id, "name": fe.name, "extensions": list(fe.spec.extensions)}
+                          for fe in FRONT_ENDS.values()]}
+
+
+@app.post("/api/detect")
+def detect(req: DetectRequest) -> dict:
+    return detect_language(req.code, safe_filename(req.filename) if req.filename else "").to_dict()
+
+
 @app.get("/api/stages")
 def stages() -> dict:
     return {"stages": [{"id": k, "title": t, "module": m, "explain": e} for k, (t, m, e) in STAGE_INFO.items()]}
@@ -66,13 +97,16 @@ def stages() -> dict:
 @app.get("/api/samples")
 def samples() -> dict:
     out = []
-    for path in sorted(SAMPLES_DIR.glob("*.c")):
+    order = list(FRONT_ENDS)
+    paths = [p for p in SAMPLES_DIR.rglob("*") if p.is_file() and p.suffix in EXTENSIONS]
+    for path in sorted(paths, key=lambda p: (order.index(EXTENSIONS[p.suffix]), p.name)):
         code = path.read_text(encoding="utf-8")
         first = code.lstrip().splitlines()[0] if code.strip() else ""
-        m = re.match(r"/\*\s*(.*?)\s*\*/", first)
+        m = re.match(r"(?:/\*\s*(.*?)\s*\*/|//\s*(.*))", first)
         title = path.stem.split("_", 1)[-1].replace("_", " ").title()
-        out.append({"id": path.stem, "filename": path.name, "title": title,
-                    "description": m.group(1) if m else "", "code": code})
+        language = EXTENSIONS[path.suffix]
+        out.append({"id": f"{language}-{path.stem}", "filename": path.name, "title": title, "language": language,
+                    "description": (m.group(1) or m.group(2) or "") if m else "", "code": code})
     return {"samples": out}
 
 
@@ -81,7 +115,8 @@ def scan(req: ScanRequest) -> dict:
     if not req.code.strip():
         raise HTTPException(status_code=400, detail="Source code is empty.")
     try:
-        return run_pipeline(req.code, safe_filename(req.filename), req.disabled_rules)
+        return run_pipeline(req.code, resolved_filename(req), req.disabled_rules, req.language,
+                            named=bool(req.filename))
     except ValueError as exc:
         raise HTTPException(status_code=413, detail=str(exc)) from exc
 
@@ -89,7 +124,7 @@ def scan(req: ScanRequest) -> dict:
 @app.post("/api/export")
 def export(req: ExportRequest) -> Response:
     result = scan(req)
-    stem = Path(safe_filename(req.filename)).stem
+    stem = Path(result["meta"]["filename"]).stem
     if req.format == "text":
         return PlainTextResponse(to_text(result["report"]),
                                  headers={"Content-Disposition": f'attachment; filename="{stem}-report.txt"'})

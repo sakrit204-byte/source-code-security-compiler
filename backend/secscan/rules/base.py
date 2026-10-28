@@ -57,12 +57,14 @@ class RuleMeta:
     description: str
     recommendation: str
     detects: str = ""  # how the rule matches, shown in the UI
+    languages: tuple = ("c", "cpp")  # source languages the rule applies to
 
     def to_dict(self) -> dict:
         return {
             "id": self.id, "name": self.name, "level": self.level, "severity": self.severity,
             "category": self.category, "cwe": self.cwe, "description": self.description,
             "recommendation": self.recommendation, "detects": self.detects,
+            "languages": list(self.languages),
         }
 
 
@@ -103,6 +105,7 @@ class Finding:
 class LexicalContext:
     lex: LexResult
     lines: list[str]
+    language: str = "c"
 
     @property
     def tokens(self) -> list[Token]:
@@ -115,6 +118,7 @@ class AstContext:
     sem: SemanticResult
     lines: list[str]
     constants: dict[str, int]
+    language: str = "c"
 
     @property
     def ast(self) -> A.TranslationUnit:
@@ -137,6 +141,8 @@ class AstContext:
             return None
         if isinstance(node, (A.IntLiteral, A.CharLiteral)):
             return node.value
+        if isinstance(node, A.KeywordLiteral):
+            return {"true": 1, "false": 0, "null": 0, "nullptr": 0}.get(node.value)
         if isinstance(node, A.Identifier):
             if node.name in self.constants:
                 return self.constants[node.name]
@@ -207,7 +213,17 @@ def describe(node: Optional[A.Node], ctx: Optional[AstContext] = None, depth: in
         return f"{node.kind}({node.raw})"
     if isinstance(node, A.Call):
         args = ", ".join(describe(a, ctx, depth + 1) for a in node.args)
-        return f"Call({node.func_name or describe(node.callee, ctx, depth + 1)}, [{args}])"
+        return f"Call({A.callee_path(node.callee) or describe(node.callee, ctx, depth + 1)}, [{args}])"
+    if isinstance(node, A.New):
+        args = ", ".join(describe(a, ctx, depth + 1) for a in node.args)
+        size = f"[{describe(node.array_size, ctx, depth + 1)}]" if node.is_array else ""
+        return f"New({node.type}{size}, [{args}])"
+    if isinstance(node, A.Delete):
+        return f"Delete{'[]' if node.is_array else ''}({describe(node.operand, ctx, depth + 1)})"
+    if isinstance(node, A.KeywordLiteral):
+        return f"Literal({node.value})"
+    if isinstance(node, A.Lambda):
+        return f"Lambda({', '.join(p.name for p in node.params)})"
     if isinstance(node, A.BinaryOp):
         return f"BinaryOp('{node.op}', {describe(node.left, ctx, depth + 1)}, {describe(node.right, ctx, depth + 1)})"
     if isinstance(node, A.Assignment):
@@ -291,3 +307,27 @@ DANGEROUS_FUNCTIONS: dict[str, dict] = {
     "getwd": {"severity": "medium", "cwe": "CWE-120", "why": "has no buffer size argument", "use": "getcwd(buf, sizeof buf)"},
     "strtok": {"severity": "low", "cwe": "CWE-676", "why": "keeps hidden global state and is not re-entrant", "use": "strtok_r()"},
 }
+
+# Risky Java APIs, matched by name at token level (Module 1).
+JAVA_DANGEROUS: dict[str, dict] = {
+    "exec": {"severity": "high", "cwe": "CWE-78", "why": "runs an operating-system command (Runtime.exec)",
+             "use": "ProcessBuilder with a fixed program and an argument list (no shell)"},
+    "ProcessBuilder": {"severity": "medium", "cwe": "CWE-78", "why": "starts an external process",
+                       "use": "a fixed program path and validated, allow-listed arguments"},
+    "readObject": {"severity": "high", "cwe": "CWE-502", "why": "deserialises bytes into live objects",
+                   "use": "a data format such as JSON, or an ObjectInputFilter allow-list"},
+    "ObjectInputStream": {"severity": "medium", "cwe": "CWE-502", "why": "is the entry point of Java deserialisation",
+                          "use": "a data-only format, or ObjectInputFilter with an allow-list"},
+    "XMLDecoder": {"severity": "high", "cwe": "CWE-502", "why": "can instantiate arbitrary classes from XML",
+                   "use": "a schema-validated data binding such as JAXB"},
+    "Random": {"severity": "low", "cwe": "CWE-330", "why": "(java.util.Random) is a predictable generator",
+               "use": "java.security.SecureRandom"},
+    "printStackTrace": {"severity": "low", "cwe": "CWE-209", "why": "writes internal stack traces to the output",
+                        "use": "a logger with a generic error message to the user"},
+    "DESKeySpec": {"severity": "medium", "cwe": "CWE-327", "why": "builds a key for the broken DES cipher",
+                   "use": "AES-GCM keys (KeyGenerator.getInstance(\"AES\"))"},
+}
+
+
+def dangerous_for(language: str) -> dict[str, dict]:
+    return JAVA_DANGEROUS if language == "java" else DANGEROUS_FUNCTIONS

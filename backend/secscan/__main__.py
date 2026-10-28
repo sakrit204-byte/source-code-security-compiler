@@ -1,4 +1,4 @@
-"""Command-line interface: python -m secscan FILE.c [--format text|json|html] [-o OUT]"""
+"""Command-line interface: python -m secscan FILE [--language auto|c|cpp|java] [--format text|json|html] [-o OUT]"""
 
 from __future__ import annotations
 
@@ -12,8 +12,10 @@ from .report import to_html, to_text
 
 
 def main(argv: list[str] | None = None) -> int:
-    ap = argparse.ArgumentParser(prog="secscan", description="Compiler-based source code security scanner for C")
-    ap.add_argument("file", help="C source file to scan")
+    ap = argparse.ArgumentParser(prog="secscan", description="Compiler-based source code security scanner for C, C++ and Java")
+    ap.add_argument("file", help="source file to scan (.c, .h, .cpp, .hpp, .java …)")
+    ap.add_argument("--language", choices=["auto", "c", "cpp", "java"], default="auto",
+                    help="source language (default: detect from the extension and content)")
     ap.add_argument("--format", choices=["text", "json", "html", "stages"], default="text")
     ap.add_argument("-o", "--output", help="write the report to this file instead of stdout")
     ap.add_argument("--fail-on", choices=["critical", "high", "medium", "low"],
@@ -22,7 +24,7 @@ def main(argv: list[str] | None = None) -> int:
 
     path = Path(args.file)
     source = path.read_text(encoding="utf-8", errors="replace")
-    result = run_pipeline(source, path.name)
+    result = run_pipeline(source, path.name, language=args.language)
     report = result["report"]
 
     if args.format == "json":

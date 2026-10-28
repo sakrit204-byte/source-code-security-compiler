@@ -370,10 +370,24 @@ class Call(Node):
 
     @property
     def func_name(self) -> str:
-        return self.callee.name if isinstance(self.callee, Identifier) else ""
+        """Plain function name; C++ 'std::' / '::' qualification is dropped so C rules match std::strcpy."""
+        if not isinstance(self.callee, Identifier):
+            return ""
+        name = self.callee.name
+        for prefix in ("::", "std::"):
+            if name.startswith(prefix):
+                name = name[len(prefix):]
+        return name
+
+    @property
+    def method(self) -> str:
+        """Name of the called function or method: 'exec' for both exec(x) and cp.exec(x)."""
+        if isinstance(self.callee, Member):
+            return self.callee.field_name
+        return self.func_name
 
     def label(self) -> str:
-        return f"Call {self.func_name or '<expr>'}()"
+        return f"Call {callee_path(self.callee) or '<expr>'}()"
 
 
 @dataclass(eq=False, kw_only=True)
@@ -435,9 +449,120 @@ class Comma(Node):
     exprs: list[Node] = field(default_factory=list)
 
 
+# ------------------------------------------------------ C++ / Java constructs
+@dataclass(eq=False, kw_only=True)
+class ClassDecl(Node):
+    """class / interface / enum / record, C++ struct with methods, or C++ namespace."""
+    tag: str = "class"
+    name: str = ""
+    bases: list = field(default_factory=list)
+    modifiers: str = ""
+    members: list[Node] = field(default_factory=list)
+
+    def label(self) -> str:
+        ext = f" : {', '.join(self.bases)}" if self.bases else ""
+        return f"{self.tag.capitalize()} {self.name or '<anonymous>'}{ext}"
+
+
+@dataclass(eq=False, kw_only=True)
+class ImportDecl(Node):
+    """import / package / using directive."""
+    tag: str = "import"
+    module: str = ""
+    names: list = field(default_factory=list)
+
+    def label(self) -> str:
+        return f"{self.tag.capitalize()} {self.module}"
+
+
+@dataclass(eq=False, kw_only=True)
+class Lambda(Node):
+    """Lambda expression (Java / C++)."""
+    params: list[Param] = field(default_factory=list)
+    captures: str = ""
+    body: Optional[Node] = None
+
+    def label(self) -> str:
+        return f"Lambda ({', '.join(p.name for p in self.params)})"
+
+
+@dataclass(eq=False, kw_only=True)
+class New(Node):
+    type: str = ""
+    args: list[Node] = field(default_factory=list)
+    array_size: Optional[Node] = None
+    is_array: bool = False
+    init: Optional[Node] = None  # array initializer or anonymous class body
+
+    def label(self) -> str:
+        return f"New {self.type}{'[]' if self.is_array else '()'}"
+
+
+@dataclass(eq=False, kw_only=True)
+class Delete(Node):
+    is_array: bool = False
+    operand: Optional[Node] = None
+
+    def label(self) -> str:
+        return "Delete[]" if self.is_array else "Delete"
+
+
+@dataclass(eq=False, kw_only=True)
+class Try(Node):
+    resources: list[Node] = field(default_factory=list)
+    body: Optional[Node] = None
+    handlers: list[Node] = field(default_factory=list)
+    final: Optional[Node] = None
+
+
+@dataclass(eq=False, kw_only=True)
+class Catch(Node):
+    param: Optional[Param] = None
+    body: Optional[Node] = None
+
+    def label(self) -> str:
+        if self.param is None:
+            return "Catch (...)"
+        return f"Catch ({' '.join(x for x in (self.param.type, self.param.name) if x)})"
+
+
+@dataclass(eq=False, kw_only=True)
+class Throw(Node):
+    value: Optional[Node] = None
+
+
+@dataclass(eq=False, kw_only=True)
+class ForEach(Node):
+    """Enhanced / range-based for: for (T x : xs)."""
+    decl: Optional[Node] = None
+    iterable: Optional[Node] = None
+    body: Optional[Node] = None
+
+    def label(self) -> str:
+        name = getattr(self.decl, "name", "") or "…"
+        return f"ForEach {name} : …"
+
+
+@dataclass(eq=False, kw_only=True)
+class ArrayLiteral(Node):
+    items: list[Node] = field(default_factory=list)
+
+    def label(self) -> str:
+        return f"ArrayLiteral [{len(self.items)}]"
+
+
+@dataclass(eq=False, kw_only=True)
+class KeywordLiteral(Node):
+    """true / false / null / this / super / nullptr."""
+    value: str = ""
+
+    def label(self) -> str:
+        return f"Literal {self.value}"
+
+
 STATEMENT_KINDS = (
     Compound, If, While, DoWhile, For, Switch, Case, Default, Label, Goto, Return,
-    Break, Continue, ExprStmt, EmptyStmt, DeclStmt,
+    Break, Continue, ExprStmt, EmptyStmt, DeclStmt, Try, Throw, ForEach,
 )
 
 
@@ -488,3 +613,44 @@ def root_identifier(node: Optional[Node]) -> Optional[str]:
         else:
             return None
     return None
+
+
+def callee_path(node: Optional[Node], limit: int = 5) -> str:
+    """Dotted rendering of a callee, e.g. 'Runtime.getRuntime().exec'."""
+    if node is None or limit < 0:
+        return ""
+    if isinstance(node, Identifier):
+        return node.name
+    if isinstance(node, KeywordLiteral):
+        return node.value
+    if isinstance(node, Member):
+        base = callee_path(node.obj, limit - 1)
+        sep = "->" if node.arrow else "."
+        return f"{base}{sep}{node.field_name}" if base else node.field_name
+    if isinstance(node, Call):
+        base = callee_path(node.callee, limit - 1)
+        return f"{base}()" if base else ""
+    if isinstance(node, New):
+        return f"new {node.type}()"
+    if isinstance(node, Index):
+        base = callee_path(node.array, limit - 1)
+        return f"{base}[]" if base else ""
+    return ""
+
+
+def member_path(node: Optional[Node]) -> str:
+    """Dotted path of a plain member chain (request.session.id -> 'request.session.id'); '' for anything else."""
+    parts: list[str] = []
+    while isinstance(node, (Member, Index)):
+        if isinstance(node, Member):
+            parts.append(node.field_name)
+            node = node.obj
+        else:
+            node = node.array
+    if isinstance(node, Identifier):
+        parts.append(node.name)
+    elif isinstance(node, KeywordLiteral):
+        parts.append(node.value)
+    else:
+        return ""
+    return ".".join(reversed(parts))

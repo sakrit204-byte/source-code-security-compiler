@@ -7,6 +7,9 @@ from dataclasses import dataclass, field
 from typing import Iterable, Optional
 
 from .rules.ast_rules import AST_RULES
+from .rules.common_rules import COMMON_RULES
+from .rules.cpp_rules import CPP_RULES
+from .rules.java_rules import JAVA_RULES
 from .rules.base import SEVERITY_RANK, Finding, Rule
 from .rules.lexical_rules import LEXICAL_RULES
 
@@ -29,8 +32,15 @@ class RuleRun:
         }
 
 
+STRUCTURAL_RULES = [*AST_RULES, *COMMON_RULES, *CPP_RULES, *JAVA_RULES]
+
+
 def all_rule_classes() -> list[type[Rule]]:
-    return [*LEXICAL_RULES, *AST_RULES]
+    return [*LEXICAL_RULES, *STRUCTURAL_RULES]
+
+
+def rules_for(rule_classes: list[type[Rule]], language: str) -> list[type[Rule]]:
+    return [cls for cls in rule_classes if language in cls.meta.languages]
 
 
 def rule_catalog() -> list[dict]:
@@ -38,13 +48,14 @@ def rule_catalog() -> list[dict]:
 
 
 class RuleEngine:
-    def __init__(self, disabled: Optional[Iterable[str]] = None):
+    def __init__(self, disabled: Optional[Iterable[str]] = None, language: str = "c"):
         self.disabled = set(disabled or ())
+        self.language = language
 
     def run(self, rule_classes: list[type[Rule]], ctx, prefix: str) -> tuple[list[Finding], list[RuleRun]]:
         runs: list[RuleRun] = []
         findings: list[Finding] = []
-        for cls in rule_classes:
+        for cls in rules_for(rule_classes, self.language):
             if cls.meta.id in self.disabled:
                 continue
             rule = cls()
@@ -67,7 +78,7 @@ class RuleEngine:
         return self.run(LEXICAL_RULES, ctx, "L")
 
     def run_ast(self, ctx) -> tuple[list[Finding], list[RuleRun]]:
-        return self.run(AST_RULES, ctx, "A")
+        return self.run(STRUCTURAL_RULES, ctx, "A")
 
     @staticmethod
     def correlate(lexical: list[Finding], ast: list[Finding]) -> list[dict]:

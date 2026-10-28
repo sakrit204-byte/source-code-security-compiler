@@ -1,6 +1,7 @@
 import { BookMarked, FlaskConical, Moon, PanelLeftClose, Plus, ShieldCheck, Sun, Trash2 } from "lucide-react";
+import { LANGUAGES } from "../languages";
 import type { Conversation, Sample } from "../types";
-import { cx } from "./ui";
+import { cx, LanguagePill } from "./ui";
 
 interface Props {
   conversations: Conversation[];
@@ -49,7 +50,7 @@ export function Sidebar(p: Props) {
         </div>
         <div className="min-w-0 leading-tight">
           <div className="text-sm font-semibold">SecScan Compiler</div>
-          <div className="text-[11px] text-faint">C source security analysis</div>
+          <div className="text-[11px] text-faint">C · C++ · Java security analysis</div>
         </div>
         <button onClick={p.onClose} className="ml-auto rounded-md p-1.5 text-muted hover:bg-panel-2 md:hidden" aria-label="Close sidebar">
           <PanelLeftClose size={18} />
@@ -70,17 +71,30 @@ export function Sidebar(p: Props) {
 
       <div className="mt-2 flex-1 overflow-y-auto px-2 pb-2">
         <div className="px-3 pb-1 pt-3 text-[11px] font-semibold uppercase tracking-wider text-faint">Sample programs</div>
-        {p.samples.map((s) => (
-          <button
-            key={s.id}
-            onClick={() => p.onSample(s)}
-            title={s.description}
-            className="flex w-full items-center gap-2 truncate rounded-lg px-3 py-1.5 text-left text-[13px] text-muted hover:bg-panel-2 hover:text-fg"
-          >
-            <FlaskConical size={14} className="shrink-0" />
-            <span className="truncate">{s.title}</span>
-          </button>
-        ))}
+        {LANGUAGES.map((lang) => {
+          const list = p.samples.filter((s) => s.language === lang.id);
+          if (!list.length) return null;
+          return (
+            <details key={lang.id} open={lang.id === "c"} className="group/lang">
+              <summary className="flex cursor-pointer list-none items-center gap-2 rounded-lg px-3 py-1.5 text-[12px] text-muted hover:bg-panel-2">
+                <LanguagePill language={lang.id} />
+                <span>{list.length} samples</span>
+                <span className="ml-auto text-faint transition group-open/lang:rotate-90">›</span>
+              </summary>
+              {list.map((s) => (
+                <button
+                  key={s.id}
+                  onClick={() => p.onSample(s)}
+                  title={s.description}
+                  className="flex w-full items-center gap-2 truncate rounded-lg py-1.5 pl-5 pr-3 text-left text-[13px] text-muted hover:bg-panel-2 hover:text-fg"
+                >
+                  <FlaskConical size={14} className="shrink-0" />
+                  <span className="truncate">{s.title}</span>
+                </button>
+              ))}
+            </details>
+          );
+        })}
 
         {[...groups.entries()].map(([label, convs]) => (
           <div key={label}>

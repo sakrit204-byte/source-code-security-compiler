@@ -5,7 +5,7 @@ import type { Token } from "../types";
 import type { StageViewProps } from "./common";
 
 type View = "stream" | "table" | "patterns";
-const TRIVIA = new Set(["COMMENT", "PREPROCESSOR"]);
+const TRIVIA = new Set(["COMMENT", "PREPROCESSOR", "ANNOTATION"]);
 
 export function LexerStage({ stage, focus, setFocus }: StageViewProps<"lexer">) {
   const d = stage.data;
@@ -53,7 +53,7 @@ export function LexerStage({ stage, focus, setFocus }: StageViewProps<"lexer">) 
             ))}
         </div>
         <p className="mt-2 text-xs text-faint">
-          {d.parser_stream_count} tokens are passed to the parser; comments and preprocessor directives stay with the lexical security analyser.
+          {d.parser_stream_count} tokens are passed to the parser; comments, preprocessor directives and annotations stay with the lexical security analyser.
         </p>
       </div>
 

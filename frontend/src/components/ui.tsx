@@ -1,5 +1,6 @@
 import { Terminal } from "lucide-react";
 import { useState, type ReactNode } from "react";
+import { languageInfo } from "../languages";
 import type { Severity } from "../types";
 
 export const SEVERITIES: Severity[] = ["critical", "high", "medium", "low", "info"];
@@ -135,6 +136,7 @@ export const TOKEN_COLORS: Record<string, string> = {
   OPERATOR: "text-pink-600 dark:text-pink-300",
   DELIMITER: "text-zinc-500 dark:text-zinc-400",
   PREPROCESSOR: "text-fuchsia-700 dark:text-fuchsia-300",
+  ANNOTATION: "text-lime-700 dark:text-lime-300",
   COMMENT: "text-zinc-400 italic dark:text-zinc-500",
   ERROR: "text-sev-critical underline decoration-wavy",
 };
@@ -149,13 +151,20 @@ export const TOKEN_BG: Record<string, string> = {
   OPERATOR: "bg-pink-500/10 border-pink-500/30",
   DELIMITER: "bg-zinc-500/10 border-zinc-500/30",
   PREPROCESSOR: "bg-fuchsia-500/10 border-fuchsia-500/30",
+  ANNOTATION: "bg-lime-500/10 border-lime-500/30",
   COMMENT: "bg-zinc-500/5 border-zinc-500/20",
   ERROR: "bg-red-500/15 border-red-500/40",
 };
 
-const DECL = new Set(["FunctionDef", "FunctionDecl", "VarDecl", "Param", "DeclStmt", "TypedefDecl", "RecordDecl", "EnumDecl", "Enumerator"]);
-const STMT = new Set(["Compound", "If", "While", "DoWhile", "For", "Switch", "Case", "Default", "Label", "Goto", "Return", "Break", "Continue", "ExprStmt", "EmptyStmt"]);
-const LIT = new Set(["IntLiteral", "FloatLiteral", "CharLiteral", "StringLiteral"]);
+const DECL = new Set([
+  "FunctionDef", "FunctionDecl", "VarDecl", "Param", "DeclStmt", "TypedefDecl", "RecordDecl", "EnumDecl", "Enumerator",
+  "ClassDecl", "ImportDecl",
+]);
+const STMT = new Set([
+  "Compound", "If", "While", "DoWhile", "For", "ForEach", "Switch", "Case", "Default", "Label", "Goto", "Return", "Break",
+  "Continue", "ExprStmt", "EmptyStmt", "Try", "Catch", "Throw",
+]);
+const LIT = new Set(["IntLiteral", "FloatLiteral", "CharLiteral", "StringLiteral", "KeywordLiteral", "ArrayLiteral"]);
 
 export function astKindColor(kind: string): string {
   if (kind === "TranslationUnit") return "bg-zinc-500";
@@ -169,4 +178,14 @@ export function astKindColor(kind: string): string {
 
 export function ms(value: number) {
   return value < 1 ? `${(value * 1000).toFixed(0)} µs` : `${value.toFixed(value < 10 ? 2 : 1)} ms`;
+}
+
+export function LanguagePill({ language, className }: { language: string | undefined; className?: string }) {
+  const info = languageInfo(language);
+  if (!info) return null;
+  return (
+    <span className={cx("inline-flex items-center rounded-md px-1.5 py-px text-[10.5px] font-semibold", info.tone, className)}>
+      {info.name}
+    </span>
+  );
 }

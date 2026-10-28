@@ -1,7 +1,8 @@
 # SecScan Compiler — Compiler-Based Source Code Security Scanner
 
-A lightweight, explainable static security scanner for **C** built on a hand-written compiler front end
-(lexer → parser → AST → semantic analysis). Two analysis modules, a **Lexical Security Analyzer** and a
+A lightweight, explainable static security scanner for **C, C++ and Java** built on hand-written compiler
+front ends (lexer → parser → AST → semantic analysis) — one per language, sharing a common AST, rule engine
+and report. Two analysis modules, a **Lexical Security Analyzer** and a
 **Syntax/AST Security Analyzer**, feed a common **Security Rule Engine** and **Report Generator**.
 A chat-style web UI shows every compiler stage and its inner workings.
 
@@ -41,8 +42,8 @@ On Windows you can simply run `run.bat`.
 
 ```bash
 cd backend
-python -m secscan ../samples/01_buffer_overflow.c                 # text report
-python -m secscan ../samples/03_command_injection.c --format stages
+python -m secscan ../samples/c/01_buffer_overflow.c                 # text report
+python -m secscan ../samples/c/03_command_injection.c --format stages
 python -m secscan file.c --format html -o report.html
 python -m secscan file.c --fail-on high                           # exit code 2 for CI
 ```
@@ -69,6 +70,27 @@ python -m secscan file.c --fail-on high                           # exit code 2 
 
 Each tab explains how the stage works and shows its internal log under **Under the hood**.
 Scans are kept in the sidebar history like chat conversations. Use **Edit & re-scan** to iterate on code.
+
+## Languages
+
+| Language | Front end | Extras |
+|---|---|---|
+| C | `lexer.py`, `parser.py` | preprocessor tokens, integer macros for constant folding |
+| C++ | `langs/lexer.py`, `langs/cpp_parser.py` | classes, templates, namespaces, `new`/`delete`, lambdas, range-for, C++ casts, raw strings |
+| Java | `langs/lexer.py`, `langs/java_parser.py` | classes/records/enums, generics, annotations, lambdas, try-with-resources, switch expressions, text blocks |
+
+The UI has a language selector (**Auto-detect**, C, C++, Java). In auto mode the language is taken from the
+file extension, or detected from weighted signals in the code (`langs/detect.py`); the composer shows the
+detected language live while you type or paste, and the Source stage explains the decision.
+CLI: `python -m secscan FILE --language auto|c|cpp|java`. API: `POST /api/scan` with `"language"`, and
+`POST /api/detect`.
+
+Rules declare the languages they apply to. Shared rules (credentials, injection, SQL injection, swallowed
+exceptions …) run everywhere; C/C++ memory-safety rules run for C and C++; `CPP001`–`CPP005`
+(new/delete mismatch, unbounded `cin >>`, unsafe casts, predictable `<random>` seeds, leaked `new`) and
+`JAVA001`–`JAVA012` (command injection, deserialization, weak crypto, insecure randomness, path traversal,
+XSS, XXE, disabled TLS validation, information exposure, open redirect, unsafe reflection, insecure cookies)
+are language-specific.
 
 ## Security rules
 
@@ -111,23 +133,29 @@ backend/
     lexer.py             hand-written scanner
     ast_nodes.py         AST node classes
     parser.py            recursive-descent parser + grammar
-    semantic.py          symbol table, scopes, input tagging
+    semantic.py          symbol table, scopes, input tagging (per-language taint profiles)
+    langs/               C++ and Java scanners and parsers, language detection, taint profiles
     rules/base.py        rule interface, finding model, helpers
     rules/lexical_rules.py   Module 1
-    rules/ast_rules.py       Module 2
+    rules/ast_rules.py       Module 2 (C / C++, some shared)
+    rules/common_rules.py    Module 2, all languages
+    rules/cpp_rules.py       Module 2, C++
+    rules/java_rules.py      Module 2, Java
     engine.py            rule engine + correlation
     report.py            scoring, text/HTML reports
     pipeline.py          stage orchestration
     __main__.py          CLI
   tests/                 pytest suite
 frontend/                React + Vite + Tailwind UI
-samples/                 example C programs
+samples/c, cpp, java     example programs (vulnerable and secure)
 docs/PLAN.md             implementation plan
 ```
 
 ## Scope and limitations
 
-- Targets a substantial subset of C. Preprocessor directives are tokenised, and integer `#define`s are used
+- Targets a substantial subset of C, C++ and Java (C++ templates are parsed but not instantiated;
+  Java types from libraries are known only by name).
+- C: preprocessor directives are tokenised, and integer `#define`s are used
   for constant folding, but macros are not expanded and headers are not read.
 - Analysis is rule-based and intraprocedural. Input tagging is flow-insensitive, and use-after-free uses a
   lexical approximation of dominance.

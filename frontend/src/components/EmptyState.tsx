@@ -1,5 +1,7 @@
 import { ArrowRight, Binary, Braces, FileSearch, GitBranch, ListTree, Scale, ShieldAlert, ShieldCheck, Table2 } from "lucide-react";
+import { LANGUAGES } from "../languages";
 import type { Sample } from "../types";
+import { LanguagePill } from "./ui";
 
 const STEPS = [
   { icon: FileSearch, title: "Source", text: "read & position-tag" },
@@ -13,14 +15,26 @@ const STEPS = [
   { icon: ShieldCheck, title: "Report", text: "score & fixes" },
 ];
 
+/** Two samples per language, so every front end is one click away. */
+function pickSamples(samples: Sample[]): Sample[] {
+  return LANGUAGES.flatMap((l) => samples.filter((s) => s.language === l.id).slice(0, 2));
+}
+
 export function EmptyState({ samples, onSample }: { samples: Sample[]; onSample: (s: Sample) => void }) {
   return (
     <div className="mx-auto flex w-full max-w-4xl flex-col items-center px-4 pb-8 pt-[8vh] text-center">
-      <h1 className="text-2xl font-semibold sm:text-3xl">What C code should I analyze?</h1>
+      <h1 className="text-2xl font-semibold sm:text-3xl">What code should I analyze?</h1>
       <p className="mt-2 max-w-xl text-sm text-muted">
-        Paste a program below. It is compiled through a hand-written lexer, parser and semantic analyser, then checked by
-        two security modules. Every stage and its inner workings are shown step by step.
+        Paste a C, C++ or Java program below — the language is detected automatically, or pick it yourself. The code is
+        compiled through a hand-written lexer, parser and semantic analyser for that language, then checked by two
+        security modules. Every stage and its inner workings are shown step by step.
       </p>
+      <div className="mt-3 flex items-center gap-1.5 text-xs text-faint">
+        Supported:
+        {LANGUAGES.map((l) => (
+          <LanguagePill key={l.id} language={l.id} />
+        ))}
+      </div>
 
       <div className="mt-8 flex w-full flex-wrap items-center justify-center gap-1.5">
         {STEPS.map((s, i) => (
@@ -38,13 +52,14 @@ export function EmptyState({ samples, onSample }: { samples: Sample[]; onSample:
       </div>
 
       <div className="mt-10 grid w-full gap-2 sm:grid-cols-2">
-        {samples.slice(0, 6).map((s) => (
+        {pickSamples(samples).map((s) => (
           <button
             key={s.id}
             onClick={() => onSample(s)}
             className="group rounded-2xl border border-line bg-panel px-4 py-3 text-left transition hover:bg-panel-2"
           >
             <div className="flex items-center gap-2 text-sm font-medium">
+              <LanguagePill language={s.language} />
               {s.title}
               <ArrowRight size={14} className="ml-auto text-faint opacity-0 transition group-hover:opacity-100" />
             </div>

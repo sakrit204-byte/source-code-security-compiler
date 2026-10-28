@@ -11,8 +11,8 @@ import re
 from typing import Iterable
 
 from ..tokens import Token, TokenType
-from .base import (DANGEROUS_FUNCTIONS, Finding, LexicalContext, Rule, RuleMeta, is_credential_name,
-                   looks_like_secret_value, shannon_entropy)
+from .base import (Finding, LexicalContext, Rule, RuleMeta, is_credential_name,
+                   dangerous_for, looks_like_secret_value, shannon_entropy)
 
 
 class HardcodedCredentialRule(Rule):
@@ -23,6 +23,7 @@ class HardcodedCredentialRule(Rule):
         recommendation="Load secrets at runtime from a protected configuration store or environment, "
                        "never commit them to source code.",
         detects="IDENTIFIER~/pass|secret|key|token/  ('[' … ']')?  '='  STRING_LITERAL   — or —   #define NAME \"…\"",
+        languages=("c", "cpp", "java"),
     )
 
     def check(self, ctx: LexicalContext) -> Iterable[Finding]:
@@ -98,6 +99,7 @@ class SecretLiteralRule(Rule):
         description="A string literal matches a known secret format or has the high entropy typical of keys.",
         recommendation="Remove the secret from source control, rotate it, and inject it at runtime.",
         detects="STRING_LITERAL value matched against key/token regexes and Shannon entropy ≥ 4.0 bits/char",
+        languages=("c", "cpp", "java"),
     )
 
     def check(self, ctx: LexicalContext) -> Iterable[Finding]:
@@ -113,7 +115,8 @@ class SecretLiteralRule(Rule):
             else:
                 entropy = shannon_entropy(value)
                 classes = sum(bool(re.search(p, value)) for p in (r"[a-z]", r"[A-Z]", r"[0-9]", r"[^A-Za-z0-9]"))
-                if len(value) >= 20 and " " not in value and entropy >= 4.0 and classes >= 3:
+                is_url = re.match(r"^[a-z][a-z0-9+.:-]*://", value) is not None  # endpoints: LEX006
+                if len(value) >= 20 and " " not in value and entropy >= 4.0 and classes >= 3 and not is_url:
                     yield self.finding(ctx, tok.line, tok.col,
                                        f"High-entropy literal ({entropy:.2f} bits/char, {len(value)} chars) "
                                        f"may be an embedded key: \"{mask(value)}\".",
@@ -125,27 +128,39 @@ class DangerousFunctionNameRule(Rule):
     meta = RuleMeta(
         id="LEX003", name="Dangerous function referenced", level="lexical", severity="high",
         category="Unsafe API", cwe="CWE-676",
-        description="An identifier token names a C library function that is known to be unsafe.",
+        description="An identifier token names a library function or API that is known to be unsafe.",
         recommendation="Replace the function with its bounded or safer alternative.",
-        detects="IDENTIFIER ∈ unsafe-function list (gets, strcpy, sprintf, system, …)",
+        detects="IDENTIFIER ∈ unsafe-API list for the language (C/C++: gets, strcpy, system …; "
+                "Java: exec, readObject, Random …)",
+        languages=("c", "cpp", "java"),
     )
 
     def check(self, ctx: LexicalContext) -> Iterable[Finding]:
         toks = ctx.tokens
+        table = dangerous_for(ctx.language)
+        in_import = False
+        seen: set[tuple[int, str]] = set()
         for i, tok in enumerate(toks):
-            if tok.type != TokenType.IDENTIFIER:
+            if tok.type == TokenType.KEYWORD and tok.lexeme == "import":
+                in_import = True  # java: import java.util.Random; is not a use
+            elif in_import and tok.is_op(";"):
+                in_import = False
+            if tok.type != TokenType.IDENTIFIER or in_import:
                 continue
             self.examined += 1
-            info = DANGEROUS_FUNCTIONS.get(tok.lexeme)
-            if info is None:
+            info = table.get(tok.lexeme)
+            if info is None or (tok.line, tok.lexeme) in seen:
                 continue
+            seen.add((tok.line, tok.lexeme))  # ObjectInputStream in = new ObjectInputStream(…): one finding
             nxt = toks[i + 1] if i + 1 < len(toks) else None
             is_call = nxt is not None and nxt.is_op("(")
             yield self.finding(
                 ctx, tok.line, tok.col,
-                f"'{tok.lexeme}' {info['why']}." + ("" if is_call else " (referenced without a direct call)"),
+                f"'{tok.lexeme}' {info['why']}." + ("" if is_call or tok.lexeme[:1].isupper() else
+                                                   " (referenced without a direct call)"),
                 severity=info["severity"], cwe=info["cwe"],
-                recommendation=f"Use {info['use']} instead of {tok.lexeme}().",
+                recommendation=f"Use {info['use']} instead of {tok.lexeme}"
+                               + ("." if tok.lexeme[:1].isupper() else "()."),
                 evidence=f"IDENTIFIER('{tok.lexeme}') followed by {repr(nxt.lexeme) if nxt else 'EOF'}",
                 subject=tok.lexeme, token=tok, confidence="medium",
             )
@@ -166,6 +181,7 @@ class SuspiciousIdentifierRule(Rule):
         description="Identifier names suggest backdoors, debug bypasses or disabled security checks.",
         recommendation="Review the code path; remove debug/bypass logic from production builds.",
         detects="IDENTIFIER ~ /backdoor|bypass|skip_auth|debug_mode|master_key|god_mode|…/",
+        languages=("c", "cpp", "java"),
     )
 
     def check(self, ctx: LexicalContext) -> Iterable[Finding]:
@@ -202,6 +218,7 @@ class SensitiveCommentRule(Rule):
         description="Comments reveal unfinished security work or contain sensitive values.",
         recommendation="Resolve the noted issue and strip sensitive information from comments.",
         detects="COMMENT ~ /TODO|FIXME|HACK/ ∧ security keyword   — or —   COMMENT ~ /password\\s*[:=]\\s*\\S+/",
+        languages=("c", "cpp", "java"),
     )
 
     def check(self, ctx: LexicalContext) -> Iterable[Finding]:
@@ -238,6 +255,7 @@ class NetworkLiteralRule(Rule):
         description="A string literal hard-codes an IP address or a plaintext http:// URL.",
         recommendation="Use HTTPS/TLS and move endpoints into configuration.",
         detects="STRING_LITERAL ~ /http:\\/\\// or IPv4 dotted quad (loopback/any excluded)",
+        languages=("c", "cpp", "java"),
     )
 
     def check(self, ctx: LexicalContext) -> Iterable[Finding]:

@@ -129,14 +129,24 @@ def production(name: str) -> Callable:
                 self.depth -= 1
 
         inner.__name__ = fn.__name__
+        inner.__wrapped__ = fn  # lets a subclass reuse the body without re-tracing the production
         return inner
 
     return wrap
 
 
 class Parser:
+    # Language tables; the C++ / Java / JavaScript parsers override these.
+    LANGUAGE = "C"
+    GRAMMAR = GRAMMAR
+    BINARY_PRECEDENCE = BINARY_PRECEDENCE
+    RIGHT_ASSOC: frozenset = frozenset()
+    ASSIGN_OPS = ASSIGN_OPS
+    UNARY_OPS = UNARY_OPS
+    ASSIGNABLE: tuple = (A.Identifier, A.Index, A.Member, A.UnaryOp, A.Cast)
+
     def __init__(self, tokens: list[Token], constants: Optional[dict[str, int]] = None):
-        self.tokens = tokens
+        self.tokens = list(tokens)
         self.constants: dict[str, int] = dict(constants or {})
         self.pos = 0
         self.errors: list[SyntaxErrorInfo] = []
@@ -171,6 +181,10 @@ class Parser:
     @property
     def cur(self) -> Token:
         return self.tokens[self.pos]
+
+    @property
+    def prev(self) -> Optional[Token]:
+        return self.tokens[self.pos - 1] if self.pos > 0 else None
 
     def peek(self, offset: int = 1) -> Token:
         i = min(self.pos + offset, len(self.tokens) - 1)
@@ -730,14 +744,14 @@ class Parser:
 
     def parse_assignment(self) -> A.Node:
         left = self.parse_conditional()
-        if self.cur.type == TokenType.OPERATOR and self.cur.lexeme in ASSIGN_OPS:
+        if self.cur.type == TokenType.OPERATOR and self.cur.lexeme in self.ASSIGN_OPS:
             op = self.advance()
             self.enter("assignment_expression")
             try:
                 value = self.parse_assignment()
             finally:
                 self.depth -= 1
-            if not isinstance(left, (A.Identifier, A.Index, A.Member, A.UnaryOp, A.Cast)):
+            if not isinstance(left, self.ASSIGNABLE):
                 self.errors.append(SyntaxErrorInfo(f"left side of '{op.lexeme}' is not assignable",
                                                    op.line, op.col, "continued (semantic error)"))
             return A.Assignment(op=op.lexeme, target=left, value=value, line=left.line, col=left.col)
@@ -756,17 +770,24 @@ class Parser:
             return A.Conditional(cond=cond, then=then, otherwise=otherwise, line=cond.line, col=cond.col)
         return cond
 
+    def binary_prec(self, tok: Token) -> Optional[int]:
+        return self.BINARY_PRECEDENCE.get(tok.lexeme) if tok.type == TokenType.OPERATOR else None
+
     def parse_binary(self, min_prec: int) -> A.Node:
         left = self.parse_cast()
         while True:
             tok = self.cur
-            prec = BINARY_PRECEDENCE.get(tok.lexeme) if tok.type == TokenType.OPERATOR else None
+            prec = self.binary_prec(tok)
             if prec is None or prec < min_prec:
                 return left
             self.advance()
             self.count("binary_expression")
-            right = self.parse_binary(prec + 1)  # all binary operators are left-associative
+            right = self.parse_binary_rhs(tok, prec)
             left = A.BinaryOp(op=tok.lexeme, left=left, right=right, line=left.line, col=left.col)
+
+    def parse_binary_rhs(self, op: Token, prec: int) -> A.Node:
+        # Left-associative operators bind the right operand one level tighter.
+        return self.parse_binary(prec if op.lexeme in self.RIGHT_ASSOC else prec + 1)
 
     def is_type_start(self, tok: Token) -> bool:
         if tok.type == TokenType.KEYWORD:
@@ -791,7 +812,7 @@ class Parser:
 
     def parse_unary(self) -> A.Node:
         tok = self.cur
-        if tok.type == TokenType.OPERATOR and tok.lexeme in UNARY_OPS:
+        if tok.type == TokenType.OPERATOR and tok.lexeme in self.UNARY_OPS:
             self.advance()
             self.enter("unary_expression")
             try:

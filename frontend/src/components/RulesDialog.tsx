@@ -1,12 +1,14 @@
 import { X } from "lucide-react";
 import { useEffect, useState } from "react";
 import { api } from "../api";
+import { LANGUAGES, type LanguageId } from "../languages";
 import type { RuleMeta } from "../types";
-import { Badge, SeverityBadge } from "./ui";
+import { Badge, cx, LanguagePill, SeverityBadge } from "./ui";
 
 export function RulesDialog({ onClose }: { onClose: () => void }) {
   const [rules, setRules] = useState<RuleMeta[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [language, setLanguage] = useState<LanguageId | "all">("all");
 
   useEffect(() => {
     api.rules().then(setRules, (e) => setError(String(e)));
@@ -15,10 +17,11 @@ export function RulesDialog({ onClose }: { onClose: () => void }) {
     return () => window.removeEventListener("keydown", onKey);
   }, [onClose]);
 
+  const shown = (rules ?? []).filter((r) => language === "all" || r.languages.includes(language));
   const groups: [string, RuleMeta[]][] = rules
     ? [
-        ["Module 1 — Lexical Security Analyzer", rules.filter((r) => r.level === "lexical")],
-        ["Module 2 — Syntax / AST Security Analyzer", rules.filter((r) => r.level === "ast")],
+        ["Module 1 — Lexical Security Analyzer", shown.filter((r) => r.level === "lexical")],
+        ["Module 2 — Syntax / AST Security Analyzer", shown.filter((r) => r.level === "ast")],
       ]
     : [];
 
@@ -32,10 +35,24 @@ export function RulesDialog({ onClose }: { onClose: () => void }) {
       >
         <div className="flex items-center border-b border-line px-5 py-3">
           <h2 className="font-semibold">Security rule catalog</h2>
-          <span className="ml-2 text-xs text-faint">{rules ? `${rules.length} rules` : ""}</span>
+          <span className="ml-2 text-xs text-faint">{rules ? `${shown.length} of ${rules.length} rules` : ""}</span>
           <button onClick={onClose} className="ml-auto rounded-md p-1 text-muted hover:bg-panel-2" aria-label="Close">
             <X size={18} />
           </button>
+        </div>
+        <div className="flex gap-1 border-b border-line px-5 py-2">
+          {(["all", ...LANGUAGES.map((l) => l.id)] as const).map((id) => (
+            <button
+              key={id}
+              onClick={() => setLanguage(id)}
+              className={cx(
+                "rounded-full px-3 py-1 text-xs",
+                language === id ? "bg-fg text-bg" : "text-muted hover:bg-panel-2 hover:text-fg",
+              )}
+            >
+              {id === "all" ? "All languages" : LANGUAGES.find((l) => l.id === id)!.name}
+            </button>
+          ))}
         </div>
         <div className="space-y-6 overflow-y-auto px-5 py-4">
           {error && <p className="text-sm text-sev-critical">{error}</p>}
@@ -52,6 +69,11 @@ export function RulesDialog({ onClose }: { onClose: () => void }) {
                       <SeverityBadge severity={r.severity} />
                       <Badge>{r.cwe}</Badge>
                       <Badge>{r.category}</Badge>
+                      <span className="ml-auto flex gap-1">
+                        {r.languages.map((l) => (
+                          <LanguagePill key={l} language={l} />
+                        ))}
+                      </span>
                     </div>
                     <p className="mt-1.5 text-[13px] text-muted">{r.description}</p>
                     <p className="mt-1 font-mono text-[11px] text-faint">{r.detects}</p>

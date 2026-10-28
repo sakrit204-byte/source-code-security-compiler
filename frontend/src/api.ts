@@ -1,4 +1,5 @@
-import type { RuleMeta, Sample, ScanResult } from "./types";
+import type { LanguageChoice } from "./languages";
+import type { Detection, RuleMeta, Sample, ScanResult } from "./types";
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(path, {
@@ -19,18 +20,20 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 export const api = {
-  scan: (code: string, filename: string, disabledRules: string[] = []) =>
+  scan: (code: string, filename: string, language: LanguageChoice = "auto", disabledRules: string[] = []) =>
     request<ScanResult>("/api/scan", {
       method: "POST",
-      body: JSON.stringify({ code, filename, disabled_rules: disabledRules }),
+      body: JSON.stringify({ code, filename, language, disabled_rules: disabledRules }),
     }),
+  detect: (code: string, filename: string, signal?: AbortSignal) =>
+    request<Detection>("/api/detect", { method: "POST", body: JSON.stringify({ code, filename }), signal }),
   samples: () => request<{ samples: Sample[] }>("/api/samples").then((r) => r.samples),
   rules: () => request<{ rules: RuleMeta[] }>("/api/rules").then((r) => r.rules),
-  async export(code: string, filename: string, format: "html" | "text" | "json") {
+  async export(code: string, filename: string, format: "html" | "text" | "json", language: LanguageChoice = "auto") {
     const res = await fetch("/api/export", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ code, filename, format }),
+      body: JSON.stringify({ code, filename, format, language }),
     });
     if (!res.ok) throw new Error(`Export failed (${res.status})`);
     const blob = await res.blob();

@@ -57,7 +57,7 @@ def to_text(report: dict) -> str:
         "=" * 72,
         " SOURCE CODE SECURITY REPORT",
         "=" * 72,
-        f" File      : {meta.get('filename', '<input>')}",
+        f" File      : {meta.get('filename', '<input>')}    Language: {meta.get('language', 'C')}",
         f" Lines     : {meta.get('lines')}    Tokens: {meta.get('tokens')}    AST nodes: {meta.get('ast_nodes')}",
         f" Score     : {report['score']}/100   Grade: {report['grade']} ({report['risk']})",
         " Findings  : " + ", ".join(f"{k}={v}" for k, v in report["severity_counts"].items()),
@@ -123,7 +123,7 @@ pre{{background:#f2f4f7;border-radius:8px;padding:8px 12px;overflow:auto}} .fix{
 .ln{{white-space:pre;padding:0 12px}} .ln span{{display:inline-block;width:40px;color:#98a2b3}} .ln.hit{{background:#fee4e2}}
 </style></head><body><main>
 <h1>Source Code Security Report</h1>
-<div class="muted">{esc(meta.get('filename', 'input'))} · {meta.get('lines')} lines · {meta.get('tokens')} tokens · {meta.get('ast_nodes')} AST nodes · generated {esc(meta.get('generated_at', ''))}</div>
+<div class="muted">{esc(meta.get('filename', 'input'))} · {esc(meta.get('language', 'C'))} · {meta.get('lines')} lines · {meta.get('tokens')} tokens · {meta.get('ast_nodes')} AST nodes · generated {esc(meta.get('generated_at', ''))}</div>
 <section class="score"><div class="grade">{report['grade']}</div>
 <div><div><b>{report['score']}/100</b> — {esc(report['risk'])}</div><div style="margin-top:8px">{counts}</div>
 <div class="muted" style="margin-top:8px">{esc(report['scoring'])}</div></div></section>

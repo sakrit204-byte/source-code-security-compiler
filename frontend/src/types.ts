@@ -1,3 +1,5 @@
+import type { LanguageChoice, LanguageId } from "./languages";
+
 export type Severity = "critical" | "high" | "medium" | "low" | "info";
 export type StageStatus = "ok" | "warning" | "alert" | "error";
 export type StageId =
@@ -56,6 +58,16 @@ export interface RuleMeta {
   description: string;
   recommendation: string;
   detects: string;
+  languages: LanguageId[];
+}
+
+export interface Detection {
+  language: LanguageId;
+  name: string;
+  confidence: number;
+  method: "user" | "extension" | "content" | "default";
+  signals: string[];
+  scores: Record<LanguageId, number>;
 }
 
 export interface RuleRun extends RuleMeta {
@@ -137,7 +149,16 @@ export interface Report {
 }
 
 export interface StageData {
-  source: { filename: string; lines: number; non_blank_lines: number; characters: number; sha256: string };
+  source: {
+    filename: string;
+    lines: number;
+    non_blank_lines: number;
+    characters: number;
+    sha256: string;
+    language: LanguageId;
+    language_name: string;
+    detection: Detection;
+  };
   lexer: {
     tokens: Token[];
     stats: Record<string, number>;
@@ -156,7 +177,7 @@ export interface StageData {
     typedefs: string[];
     constants: Record<string, number>;
   };
-  ast: { tree: AstNode; node_count: number; depth: number; kinds: Record<string, number>; functions: string[] };
+  ast: { tree: AstNode; node_count: number; depth: number; kinds: Record<string, number>; functions: string[]; classes: string[] };
   semantic: {
     scopes: ScopeInfo;
     symbols: SymbolInfo[];
@@ -188,7 +209,18 @@ export interface Stage<K extends StageId = StageId> {
 }
 
 export interface ScanResult {
-  meta: { filename: string; lines: number; tokens: number; ast_nodes: number; duration_ms: number; generated_at: string; version: string };
+  meta: {
+    filename: string;
+    lines: number;
+    tokens: number;
+    ast_nodes: number;
+    duration_ms: number;
+    generated_at: string;
+    version: string;
+    language: string;
+    language_id: LanguageId;
+    detection: Detection;
+  };
   source: string;
   stages: Stage[];
   report: Report;
@@ -200,12 +232,15 @@ export interface Sample {
   title: string;
   description: string;
   code: string;
+  language: LanguageId;
 }
 
 export interface Turn {
   id: string;
   code: string;
   filename: string;
+  /** What the user asked for; the resolved language is in result.meta. */
+  language?: LanguageChoice;
   createdAt: number;
   result?: ScanResult;
   error?: string;

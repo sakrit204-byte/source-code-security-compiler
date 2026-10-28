@@ -86,9 +86,9 @@ def test_free_inside_branch_is_not_use_after_free():
     assert "AST010" not in hits
 
 
-@pytest.mark.parametrize("sample", sorted(p.name for p in SAMPLES.glob("*.c")))
+@pytest.mark.parametrize("sample", sorted(p.name for p in (SAMPLES / "c").glob("*.c")))
 def test_samples_run_end_to_end(sample):
-    result = run_pipeline((SAMPLES / sample).read_text(), sample)
+    result = run_pipeline((SAMPLES / "c" / sample).read_text(), sample)
     assert [s["id"] for s in result["stages"]] == [
         "source", "lexer", "lexical_security", "parser", "ast", "semantic", "ast_security", "rule_engine", "report"]
     if sample.startswith("06"):

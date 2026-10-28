@@ -39,7 +39,7 @@ export default function App() {
 
   const runSample = (s: Sample) => {
     setSidebarOpen(false);
-    store.submit(s.code, s.filename, { fresh: true });
+    store.submit(s.code, s.filename, s.language, { fresh: true });
   };
 
   return (
@@ -94,7 +94,7 @@ export default function App() {
                     key={`${turn.id}-${turn.result ? "r" : "p"}`}
                     turn={turn}
                     onAnimationDone={() => store.finishAnimation(store.active!.id, turn.id)}
-                    onEdit={(code, filename) => composer.current?.load(code, filename)}
+                    onEdit={(code, filename, language) => composer.current?.load(code, filename, language)}
                     onRetry={() => store.retry(turn.id)}
                   />
                 </div>
@@ -104,7 +104,7 @@ export default function App() {
           )}
         </div>
 
-        <Composer ref={composer} busy={store.busy} onSubmit={(code, filename) => store.submit(code, filename)} />
+        <Composer ref={composer} busy={store.busy} onSubmit={(code, filename, language) => store.submit(code, filename, language)} />
       </main>
 
       {rulesOpen && <RulesDialog onClose={() => setRulesOpen(false)} />}
