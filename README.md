@@ -161,3 +161,15 @@ docs/PLAN.md             implementation plan
   lexical approximation of dominance.
 - False positives and false negatives are possible. Interprocedural data flow, full taint tracking,
   symbolic execution, ML and binary analysis are out of scope.
+
+## Free hosting
+
+The `Dockerfile` builds the React UI and serves it from the FastAPI backend, so one web service hosts the whole
+app. `render.yaml` deploys it on Render's free plan:
+
+[![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/sakrit204-byte/source-code-security-compiler)
+
+Sign in to Render with GitHub, open the button above (or **New → Blueprint** and pick this repository), keep
+the **Free** instance type and click **Apply**. The app is then live at `https://secscan-compiler.onrender.com`
+(or the URL Render shows) and redeploys on every push to `main`. A free service sleeps after 15 minutes without
+traffic; the first request afterwards takes about a minute while it wakes up.

@@ -1,0 +1,9 @@
+# Render Blueprint: one free web service that serves the UI and the API.
+services:
+  - type: web
+    name: secscan-compiler
+    runtime: docker
+    plan: free
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /api/rules
+    autoDeploy: true
