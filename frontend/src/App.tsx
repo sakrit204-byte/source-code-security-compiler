@@ -39,7 +39,7 @@ export default function App() {
 
   const runSample = (s: Sample) => {
     setSidebarOpen(false);
-    store.submit(s.code, s.filename, s.language, { fresh: true });
+    store.submit(s.code, s.filename, "auto", { fresh: true });
   };
 
   return (
